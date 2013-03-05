@@ -552,103 +552,147 @@ LuaGongqiTargetMod = sgs.CreateTargetModSkill{
 	技能名：固政
 	相关武将：山·张昭张纮
 	描述：其他角色的弃牌阶段结束时，你可以将该角色于此阶段中弃置的一张牌从弃牌堆返回其手牌，若如此做，你可以获得弃牌堆里其余于此阶段中弃置的牌。
-	状态：验证失败（QVariant无法转化成QList<int>）
+	状态：0224验证通过（以字符串形式保存卡牌id）
 ]]--
+require("bit")--位运算所需
+function strcontain(a,b)
+	if a=="" then return false end
+	local c=a:split("+")
+	local k=false
+	for i=1,#c,1 do
+		if a[i]==b then
+			k=true
+			break
+		end
+	end
+	return k
+end 
 LuaGuzheng = sgs.CreateTriggerSkill{
-	name = "LuaGuzheng", 
-	frequency = sgs.Skill_NotFrequent, 
-	events = {sgs.CardsMoveOneTime}, 
+	name = "LuaGuzheng",
+	frequency = sgs.Skill_NotFrequent,
+	events = {sgs.CardsMoveOneTime},
 	on_trigger = function(self, event, player, data)
 		local room = player:getRoom()
 		local erzhang = room:findPlayerBySkillName(self:objectName())
 		local current = room:getCurrent()
 		local move = data:toMoveOneTime()
 		local source = move.from
-		if source and erzhang then
-			if player:objectName() == source:objectName() then
-				if erzhang:objectName() ~= current:objectName() then
-					if current:getPhase() == sgs.Player_Discard then
-						local tag = room:getTag("GuzhengToGet")
-						local guzhengToGet = tag:toIntList()
-						tag = room:getTag("GuzhengToOther")
-						local guzhengOther = tag:toIntList()
-						for _,card_id in sgs.qlist(move.card_ids) do
-							local flag = bit.band(move.reason.m_reason, sgs.CardMoveReason_S_MASK_BASIC_REASON)
-							if flag == sgs.CardMoveReason_S_REASON_DISCARD then
-								if source:objectName() == current:objectName() then
-									guzhengToGet:append(card_id)
-								elseif not guzhengToGet:contains(card_id) then
-									guzhengOther:append(card_id)
-								end
-							end
+		if source == nil then return false end
+		if((player:objectName() ~= source:objectName()) or (erzhang == nil) or (erzhang:objectName() == current:objectName()))then
+			return false
+		end
+		if current:getPhase() == sgs.Player_Discard then
+			local tag = room:getTag("GuzhengToGet")
+			local guzhengToGet= tag:toString()
+			tag = room:getTag("GuzhengOther")
+			local guzhengOther = tag:toString()
+			if guzhengToGet==nil then
+				guzhengToGet=""
+			end
+			if guzhengOther==nil then
+				guzhengOther=""
+			end
+			for _,card_id in sgs.qlist(move.card_ids) do
+				local flag = bit:_and(move.reason.m_reason, sgs.CardMoveReason_S_MASK_BASIC_REASON)
+				if flag == sgs.CardMoveReason_S_REASON_DISCARD then
+					if source:objectName() == current:objectName() then
+						if guzhengToGet=="" then
+							guzhengToGet=tostring(card_id)
+						else
+							guzhengToGet=guzhengToGet.."+"..tostring(card_id)
 						end
-						tag:setValue(guzhengToGet)
-						room:setTag("GuzhengToGet", tag)
-						tag:setValue(guzhengOther)
-						room:setTag("GuzhengOther", tag)
+					elseif not strcontain(guzhengToGet,tostring(card_id)) then
+						if guzhengOther=="" then
+							guzhengOther=tostring(card_id)
+						else
+							guzhengOther=guzhengOther.."+"..tostring(card_id)
+						end
 					end
 				end
 			end
+			if guzhengToGet then
+				room:setTag("GuzhengToGet", sgs.QVariant(guzhengToGet))
+			end
+			if guzhengOther then
+				room:setTag("GuzhengOther", sgs.QVariant(guzhengOther))
+			end
 		end
 		return false
-	end, 
+	end,
 	can_trigger = function(self, target)
 		return target
 	end
 }
 LuaGuzhengGet = sgs.CreateTriggerSkill{
 	name = "#LuaGuzhengGet",
-	frequency = sgs.Skill_Frequent, 
-	events = {sgs.EventPhaseEnd}, 
+	frequency = sgs.Skill_Frequent,
+	events = {sgs.EventPhaseEnd},
 	on_trigger = function(self, event, player, data)
 		if not player:isDead() then
 			local room = player:getRoom()
-			local player = room:findPlayerBySkillName(self:objectName())
-			if player then
+			local erzhang = room:findPlayerBySkillName(self:objectName())
+			if erzhang then
 				local tag = room:getTag("GuzhengToGet")
-				local guzheng_cardsToGet = tag:toIntList()
+				local guzheng_cardsToGet
+				local guzheng_cardsOther
+				if tag then
+					guzheng_cardsToGet = tag:toString():split("+")
+				else
+					return false
+				end
 				tag = room:getTag("GuzhengOther")
-				local guzheng_cardsOther = tag:toIntList()
+				if tag then
+					guzheng_cardsOther = tag:toString():split("+")
+				end
 				room:removeTag("GuzhengToGet")
 				room:removeTag("GuzhengOther")
-
 				local cardsToGet = sgs.IntList()
 				local cards = sgs.IntList()
-				for _,card_data in sgs.qlist(guzheng_cardsToGet) do
-					local card_id = card_data:toInt()
-					if room:getCardPlace(card_id) == sgs.Player_DiscardPile then
-						cardsToGet:append(card_id)
-						cards:append(card_id)
+				for i=1,#guzheng_cardsToGet,1 do
+					local card_data=guzheng_cardsToGet[i]
+					if card_data==nil then return false end
+					if card_data~="" then--弃牌阶段没弃牌则字符串为""
+						local card_id = tonumber(card_data)
+						if room:getCardPlace(card_id) == sgs.Player_DiscardPile then
+							cardsToGet:append(card_id)
+							cards:append(card_id)
+						end
 					end
 				end
-				for _,card_data in sgs.qlist(guzheng_cardsOther) do
-					local card_id = card_data:toInt()
-					if room:getCardPlace(card_id) == sgs.Player_DiscardPile then
-						cards:append(card_id)
+				if guzheng_cardsOther then
+					for i=1,#guzheng_cardsOther,1 do
+						local card_data=guzheng_cardsOther[i]
+						if card_data==nil then return false end
+						if card_data~="" then
+							local card_id = tonumber(card_data)
+							if room:getCardPlace(card_id) == sgs.Player_DiscardPile then
+								cardsToGet:append(card_id)
+								cards:append(card_id)
+							end
+						end
 					end
 				end
 				if cardsToGet:length() > 0 then
 					local ai_data = sgs.QVariant()
 					ai_data:setValue(cards:length())
-					if player:askForSkillInvoke(self:objectName(), ai_data) then
-						room:fillAG(cards, player)
-						local to_back = room:askForAG(player, cardsToGet, false, self:objectName())
+					if erzhang:askForSkillInvoke(self:objectName(), ai_data) then
+						room:fillAG(cards, erzhang)
+						local to_back = room:askForAG(erzhang, cardsToGet, false, self:objectName())
 						local backcard = sgs.Sanguosha:getCard(to_back)
 						player:obtainCard(backcard)
 						cards:removeOne(to_back)
-						player:invoke("clearAG")
+						erzhang:invoke("clearAG")
 						local move = sgs.CardsMoveStruct()
 						move.card_ids = cards
-						move.to = player
+						move.to = erzhang
 						move.to_place = sgs.Player_PlaceHand
 						room:moveCardsAtomic(move, true)
 					end
 				end
-
 			end
 		end
 		return false
-	end, 
+	end,
 	can_trigger = function(self, target)
 		if target then
 			return target:getPhase() == sgs.Player_Discard
@@ -1924,14 +1968,15 @@ LuaLihuo = sgs.CreateTriggerSkill{
 	技能名：落英
 	相关武将：一将成名·曹植
 	描述：当其他角色的梅花牌因弃置或判定而置入弃牌堆时，你可以获得之。
-	状态：尚未验证（因为按位与操作无法验证）
+	状态：0224验证通过，需要bit.lua
 ]]--
-require("bit")--按位操作所需库文件
+require("bit")--按位操作所需
 LuaLuoying = sgs.CreateTriggerSkill{
-	name = "LuaLuoying", 
-	frequency = sgs.Skill_Frequent, 
+	name = "LuaLuoying",
+	frequency = sgs.Skill_Frequent,
 	events = {sgs.CardsMoveOneTime},
-	on_trigger = function(self, event, player, data) 
+	on_trigger = function(self, event, player, data)
+		local room=player:getRoom()
 		local move = data:toMoveOneTime()
 		local source = move.from
 		if source then
@@ -1939,7 +1984,7 @@ LuaLuoying = sgs.CreateTriggerSkill{
 				if move.to_place == sgs.Player_DiscardPile then
 					local reason = move.reason.m_reason
 					local flag = false
-					if bit.band(reason, sgs.CardMoveReason_S_MARK_BASIC_REASON) == sgs.CardMoveReason_S_REASON_DISCARD then
+					if bit:_and(reason, sgs.CardMoveReason_S_MASK_BASIC_REASON) == sgs.CardMoveReason_S_REASON_DISCARD then
 						flag = true
 					end
 					if reason == sgs.CardMoveReason_S_REASON_JUDGEDONE then
@@ -1949,9 +1994,9 @@ LuaLuoying = sgs.CreateTriggerSkill{
 						local luoyingMove = sgs.CardsMoveStruct()
 						luoyingMove.to = player
 						luoyingMove.to_place = sgs.Player_PlaceHand
-						local ids = move.card_ids
+						local ids = sgs.QList2Table(move.card_ids)
 						local places = move.from_places
-						for i=0, ids:length()-1, 1 do
+						for i=1, #ids, 1 do
 							local id = ids[i]
 							local place = places[i]
 							local suit = sgs.Sanguosha:getCard(id):getSuit()
@@ -1965,7 +2010,7 @@ LuaLuoying = sgs.CreateTriggerSkill{
 								end
 							end
 						end
-						if not luoyingMove.card_ids:empty() then
+						if not luoyingMove.card_ids:isEmpty() then
 							if player:askForSkillInvoke(self:objectName(), data) then
 								if luoyingMove.card_ids:length() > 1 then
 									while (not luoyingMove.card_ids:isEmpty()) do
@@ -1977,7 +2022,7 @@ LuaLuoying = sgs.CreateTriggerSkill{
 										end
 										luoyingMove.card_ids:removeOne(card_id)
 									end
-									if luoyingMove.card_ids:empty() then
+									if luoyingMove.card_ids:isEmpty() then
 										return false
 									end
 								end
@@ -1989,7 +2034,7 @@ LuaLuoying = sgs.CreateTriggerSkill{
 			end
 		end
 		return false
-	end, 
+	end,
 	priority = 4
 }
 --[[
